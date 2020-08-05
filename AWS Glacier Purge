@@ -1,0 +1,62 @@
+#In the bucket on AWS there is a lifecycle rule that runs on database backups older than 30 days.  
+#It transitions them into Amazon Glacier where they stay indefinitely.  This script deletes all but the latest backups leaving only 1 backup (of each database) per month
+#This yeilds a database backup going further back than the standard RDS backups can offer - at low cost.
+
+#Use AWS Cached credentials on idbdc
+function ParseS3($datepart) {
+
+	foreach($name in $datepart){
+#example of -key to delete would be 'idrds/backup_idtechex18-02-2018.bak'
+$logging = remove-S3object -force -BucketName $bucketname  -key $name.name
+	if ($logging.deletemarker -eq 'true'){logging $logging} }
+
+	}
+
+#Log deleted keys to the log
+Function Logging($key) {
+
+get-date | out-file C:\scripts\AWS\Purge_Glacier.txt -Noclobber -append
+$key | out-file C:\scripts\AWS\Purge_Glacier.txt -Noclobber -append
+
+}
+
+#Initialise the credentials
+Initialize-AWSDefaultConfiguration -ProfileName JamesBennett
+
+#AWS bucket name where the backups are kept
+$bucketname = "yourbucket"
+
+#Empty hashtable
+$datehash =@{}
+
+#Get all the Glacier Starage Class backups
+$count = get-s3object -bucketname $bucketname | where {$_.key -like 'idrds/*' -and $_.StorageClass -like 'GLACIER'}
+
+#Group $count on Date(.Value) and sort on Name
+$count | Group {$_.lastmodified.ToString("yyyy-MM-dd")} | Sort name
+
+#Add the grouped entries as $filename and $filedate to the hashtable $datehash
+foreach ($backup in $count){$filedate = $backup.lastmodified.ToString("yyyy-MM-dd") ; $filename=$backup.key
+
+$datehash.Add($filename, $Filedate)
+	}
+
+
+#Add these in as the years pass :-)
+$dateroller = @("2018-01","2018-02","2018-03","2018-04","2018-05","2018-06","2018-07","2018-08","2018-09","2018-10","2018-11","2018-12,"2019-01","2019-02","2019-03","2019-04","2019-05","2019-06","2019-07","2019-08","2019-09","2019-10","2019-11","2019-12)
+#$dateroller = @("2018-01","2018-02")#,"2018-03","2018-04","2018-05","2018-06","2018-07","2018-08","2018-09","2018-10","2018-11","2018-12")
+
+
+#Search for each date in $dateroller in the $datehash array and for each of the entries group on value
+foreach($date in $dateroller){
+
+$groups= $datehash.GetEnumerator() | where-object -Filterscript {$_.value -match $date} 
+$groups = $groups | group-object -property value
+
+			
+					}
+
+#pass each $date in $dateroller to the hashtable ($datehash) then sort $datepart on date descending, skipping the first 4 (4 oldest).  If there are only 4 db's i.e previous deletions have happened, the last 4 wont be.  
+#If there pass the rest to delete function
+foreach($date in $dateroller){$datepart = $datehash.GetEnumerator() | where-object -Filterscript {$_.value -match $date} | sort-object -descending {$_.value -as [DateTime] } | select -skip 4 ; ParseS3 $datepart}
+	
